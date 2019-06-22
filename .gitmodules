@@ -1,0 +1,3 @@
+[submodule "Windows-Internals"]
+	path = Windows-Internals
+	url = https://github.com/Fare9/Windows-Internals.git
