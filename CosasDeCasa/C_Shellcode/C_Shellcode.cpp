@@ -1,10 +1,18 @@
 #include <Windows.h>
 
 #pragma section(".code", execute,read,write)
-#pragma comment(linker,"/MERGE:.text=.code")
+/*
+*	If we Merge text section on this one, we will have
+*	a lot of Visual Studio code inside of this part of
+*	the code, something not good for a shellcode, so
+*	just merge data that we want to save.
+*/
+//#pragma comment(linker,"/MERGE:.text=.code")
 #pragma comment(linker,"/MERGE:.data=.code")
+// Section permissions
 #pragma comment(linker,"/SECTION:.code,ERW")
-#pragma code_seg(".code")
+// .code section starts here
+#pragma code_seg(push, ".code")
 
 #define VAR_DWORD(name)	__asm _emit 0x04 __asm _emit 0x04 \
 						__asm _emit 0x04 __asm _emit 0x04
@@ -45,6 +53,44 @@ typedef struct _ADDRESS_TABLE
 
 } ADDRESS_TABLE;
 #pragma pack()
+
+
+unsigned long get_kernel32_base();
+unsigned long address_table_storage();
+int compare(char *p1, char *p2);
+BOOL walk_export_list(unsigned long dll_base, DWORD *function_ptr, char *func_name);
+
+
+/*
+*	We set main function as the first one, so we will have
+*	code section starts by main function, we can create
+*	the virtual memory, and jump to the offset 0 of that
+*	allocated memory to run the shellcode
+*/
+
+void main()
+{
+	LoadLibraryAPtr loadlibraryA;
+	GetProcAddressPtr getprocaddress;
+	HMODULE msvcr90_dll_handle;
+
+	unsigned long kernel32base = get_kernel32_base();
+
+	ADDRESS_TABLE *address_table = (ADDRESS_TABLE*)address_table_storage();
+		
+	if (!walk_export_list(kernel32base, &loadlibraryA, address_table->routines.LoadLibraryA))
+		return;
+
+	msvcr90_dll_handle = loadlibraryA(address_table->MSVCR90dll);
+
+	if (!walk_export_list(kernel32base, &getprocaddress, address_table->routines.GetProcAddress))
+		return;
+
+	address_table->printf = (printfPtr)getprocaddress(msvcr90_dll_handle, address_table->printfName);
+
+	if (address_table->printf == NULL)
+		return;
+}
 
 
 unsigned long get_kernel32_base()
@@ -96,7 +142,7 @@ unsigned long address_table_storage()
 		VAR_DWORD(printf);
 
 		STR_DEF_04(formatStr, '%', 'X', '\n', '\0');
-		
+
 		VAR_DWORD(globalInteger);
 
 	end_of_data:
@@ -142,7 +188,7 @@ BOOL walk_export_list(unsigned long dll_base, DWORD *function_ptr, char *func_na
 	DWORD* address_of_names = (DWORD*)(dll_base + export_directory->AddressOfNames);
 	DWORD* address_of_functions = (DWORD*)(dll_base + export_directory->AddressOfFunctions);
 	WORD* address_of_ordinals = (WORD*)(dll_base + export_directory->AddressOfNameOrdinals);
-	
+
 	SIZE_T index, j;
 
 	for (index = 0; index < export_directory->NumberOfNames; index++)
@@ -170,27 +216,5 @@ BOOL walk_export_list(unsigned long dll_base, DWORD *function_ptr, char *func_na
 	return FALSE;
 }
 
-
-void main()
-{
-	LoadLibraryAPtr loadlibraryA;
-	GetProcAddressPtr getprocaddress;
-	HMODULE msvcr90_dll_handle;
-
-	unsigned long kernel32base = get_kernel32_base();
-
-	ADDRESS_TABLE *address_table = (ADDRESS_TABLE*)address_table_storage();
-		
-	if (!walk_export_list(kernel32base, &loadlibraryA, address_table->routines.LoadLibraryA))
-		return;
-
-	msvcr90_dll_handle = loadlibraryA(address_table->MSVCR90dll);
-
-	if (!walk_export_list(kernel32base, &getprocaddress, address_table->routines.GetProcAddress))
-		return;
-
-	address_table->printf = (printfPtr)getprocaddress(msvcr90_dll_handle, address_table->printfName);
-
-	if (address_table->printf == NULL)
-		return;
-}
+// .code section finish here
+#pragma code_seg(pop)
